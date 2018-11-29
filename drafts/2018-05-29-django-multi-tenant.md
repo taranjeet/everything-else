@@ -17,7 +17,7 @@ class AttachSubDomain(object):
 
 ```
 
-This middleware can be enable in settings by including in `MIDDLEWARE_CLASSES` like
+This middleware can be enabled in settings by including in `MIDDLEWARE_CLASSES` like
 
 ```
 MIDDLEWARE_CLASSES = [
