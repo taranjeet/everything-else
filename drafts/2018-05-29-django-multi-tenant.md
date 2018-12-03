@@ -1,19 +1,53 @@
 
 ## Steps to achieve multi-tenancy in Django
 
-Lets us consider an application named djangolibrary, hosted at djangolibrary.com. Any company can signup and hosts its library. Consider that a company named `abc` wants to host its library. It will be hosted at `abc.djangolibrary.com`. Below are the steps to achieve multi-tenancy in Django for this application.
+Lets us consider an application named djangolibrary, hosted at djangolibrary.com. Any company(let's call it customer) can signup and host its library. Consider that a customer named `abc` wants to host its library. It will be hosted at `abc.djangolibrary.com`. Below are the steps to achieve multi-tenancy in Django for this application.
 
-* First we need to add a middleware, which will attach subdomain value to the request. The middleware can be defined as
+* First, let's add a model which contain the details about the customer. `short_id` will be the unique key that can be used to identify any customer.
 
 ```
-class AttachSubDomain(object):
+# tenants/models.py
+# consider that this app is named as tenants
+# so this model will be available as tenants.models.Customer
 
-    def process_request(self, request):
+class Customer(models.Model):
+
+    short_id = models.CharField(max_length=255, unique=True, help_text='This is the unique id of the customer')
+    full_name = models.CharField(max_length=512)
+
+    class Meta:
+        db_table = 'customer'
+
+    def __str__(self):
+        return '{}'.format(self.full_name)
+```
+
+* Now, let's add a middleware, which will find the subdomain form the request and then attach relevant customer instance to the request.
+
+```
+# tenants/middlewares.py
+from tenants.models import Customer
+
+
+class TenantMiddleware(object):
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+
         domain = request.META.get('HTTP_HOST') or request.META.get('SERVER_NAME')
         pieces = domain.split('.')
         subdomain = ".".join(pieces[:-2])
-        setattr(request, 'subdomain', subdomain)
-        return None
+
+        try:
+            customer = Customer.objects.get(short_id=subdomain)
+        except Exception as e:     # noqa
+            customer = None
+
+        setattr(request, 'customer', customer)
+        response = self.get_response(request)
+        return response
 
 ```
 
@@ -22,80 +56,87 @@ This middleware can be enabled in settings by including in `MIDDLEWARE_CLASSES` 
 ```
 MIDDLEWARE_CLASSES = [
     ...,
-    'path.to.AttachSubDomain',
+    'tenants.middlewares.TenantMiddleware',
+    ...,
 ]
 ```
 
-This middleware attaches the value of subdomain on request. It can be accessed by `request.subdomain`
+This middleware attaches the value of customer instance on request. It can be accessed by `request.customer`
 
-
-* Now we need to write a generic model, which will add support for subdomain in each table. Each table will contain a column named `company_id` which will be a reference to the original company instance.
+* Now, we need to write a mixin which will attach the add `customer` as a foreign key in each model of the application. Each table will contain a column named `customer_id` which will be a reference to the `Customer` instance.
 
 ```
-# models.py
+# tenants/models.py
 
-class Company(models.Model):
-    short_code = models.CharField(max_length=255, help_text='Unique Id of the company. This is the value of subdomain')
+from django.db import models
 
+class CustomerMixin(models.Model):
 
-class CompanyModel(models.Model);
-    '''this is the generic model from which every model needs to inherit'''
-    company = models.ForeignKey(Company, blank=True, null=True, db_index=True)
+    customer = models.ForeignKey(Customer, blank=True,
+                                 null=True, db_index=True,
+                                 on_delete=models.CASCADE)
 
     class Meta:
         abstract = True
 ```
 
-Lets say, we are creating a `Team` model, which is used to denote team for a company. This model will be inherited from `CompanyModel`, like
+Lets say, we are creating a `Team` model, which is used to denote team for a company. This model will be inherited(or used as mixin in case you are using some class other than models.Model) from `CustomerMixin`, like
 
 ```
-from path.to.where.CompanyModel.lives import CompanyModel
+from tenants.models import CustomerMixin
 
-class Team(CompanyModel):
+# way 1
+class Team(CustomerMixin):
     name = models.CharField(max_length=100, unique=True)
+
+# OR
+# way 2
+class Team(AuditModelMixin, CustomerMixin):
+    name = models.CharField(max_length=100, unique=True)
+
 ```
 
-This way, any other model can be inherited from `CompanyModel`.
+Similarly, any other model can be extended.
 
-* Once every model is inherited from `CompanyModel`, we need to add a generic support to fetch and save the value of subdomain in `company` column. For this we need to write a custom queryset and manager.
+* Once every model is extended from `CustomerMixin`, we need to add a generic support to fetch and save the value of customer in `customer` column. For this we need to write a custom queryset and manager.
 
 ```
 from django.db import models
 
-class CompanyQueryset(models.query.QuerySet):
+class CustomerQuerySet(models.query.QuerySet):
 
-    def own_employees(self):
-        # how get_request provides request, this is explained below
-        request = get_request()
-        if not request.subdomain:
-            return self.none()
-        return self.filter(company__short_code=request.subdomain)
+    def own_data(self, customer):
+        return self.filter(customer=customer)
 
 
-class CompanyManager(models.Manager):
+class CustomerManager(models.Manager):
+
+    use_for_related_fields = True
 
     def get_queryset(self):
-        return CompanyQueryset(self.model, using=self._db)
+        return CustomerQuerySet(self.model, using=self._db)
 
-    def own_employees(self):
-        return self.get_queryset().own_employees()
+    def own_data(self, customer):
+        return self.get_queryset().own_data(customer)
 ```
 
-Now this custom manager needs to included in each model, which is inherited from `CompanyModel`.
+Now this manager should be added to `CustomerMixin` so that any model, which is extended from it, can use this. So `CustomerMixin` will look like
 
 ```
+class CustomerMixin(models.Model):
 
-class Team(CompanyModel):
+    customer = models.ForeignKey(Customer, blank=True,
+                                 null=True, db_index=True,
+                                 on_delete=models.CASCADE)
 
-    name = models.CharField(max_length=100, unique=True)
-
-    # keeping default model manager as well
     objects = models.Manager()
-    company_manager = CompanyManager()
+    customers = CustomerManager()
 
+    class Meta:
+        abstract = True
 ```
 
-This can be used like `Team.company_manager.own_employees()`
+Now to get objects of `Team` model, we can use something like `Team.customers.own_data(request.customer)`
 
 * Till now, we have added support to automatically add where clause on subdomain, but if any new instance of model is saved, it will be saved without the subdomain reference. For saving reference to subdomain in a generic way, we will use `pre_save` signal
 
@@ -116,18 +157,20 @@ def save_company_name(sender, instance, **kwargs):
 
 This signal runs before any model is saved. It checks if the sender is a subclass of `CompanyModel` and if it is, then it saves subdomain reference to the concerned model.
 
-* This completes most of the part of multi-tenancy when models are concerned. One important thing that is required frequently will be to access current subdomain in the template. For this, a context processor can be added.
+* This completes most of the part of multi-tenancy when models are concerned. One important thing that is required frequently will be to access current customer in the template. For this, a context processor can be added.
 
 ```
-def get_company_name(request):
+# tenants/context_processor.py
+
+def get_customer_name(request):
 
     try:
-        company_name = request.subdomain
+        customer_name = request.customer.full_name
     except Exception as e:
-        company_name = None
+        customer_name = None
 
     return {
-        'company_name': company_name
+        'customer_name': customer_name
     }
 ```
 
@@ -141,14 +184,20 @@ TEMPLATES = [
         'OPTIONS': {
             'context_processors': [
                 ...
-                'teamclone.base.context_processor.get_company_name',
+                'tenants.context_processor.get_customer_name',
+                ...
             ],
         },
     },
 ```
 
-Now to access subdomain value in the templates, we can use `{{company_name}}`.
+Now to access customer value in the templates, we can use `{{customer_name}}`.
 
-* Since we are using middleware to attach subdomain value to the request, many a times we will need to access request where it is not available. It can be made available by using the [django-contrib-requestprovider](https://pypi.org/project/django-contrib-requestprovider/) package
+## Notes
+
+* Earlier we were using global request package with the help of package like [django-contrib-requestprovider](https://pypi.org/project/django-contrib-requestprovider/), but this is not the case now. Now we are explicitly passing `request.customer` from the views to the queryset. This is considered as a best practice where the models should not be aware of the current request.
 
 
+Todos:
+
+* update info about how to save model with customer info
