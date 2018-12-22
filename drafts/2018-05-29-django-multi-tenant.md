@@ -201,3 +201,17 @@ Now to access customer value in the templates, we can use `{{customer_name}}`.
 Todos:
 
 * update info about how to save model with customer info
+- how to write middleware has changed
+- attach Customer instance in the middleware itself
+- update foreign key model, add on_delete
+- replace packge for django global request https://pypi.org/project/django-middleware-global-request/ (remove this package)
+    - pass explcity request.customer
+- add example of this being called from to of foreign key model
+    section_rows_db = curation.section_rows.own_data().order_by('section_order', 'subsection_order')
+- add home page login view
+    - customer1.djangolibrary.com  --> redirect to home or feed page of customer
+    - djangolibrary.com --> redirect to home page of djangolibrary
+- add how can I save model form instance by attaching request.customer and using `commit=False` flag
+- add decorator to check urls only accessible at customer endpoint and not others
+- override queryset for generic class based views
+- override form save for generic class based views
