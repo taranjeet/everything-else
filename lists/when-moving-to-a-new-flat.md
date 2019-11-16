@@ -1,0 +1,17 @@
+- [ ] Rent
+- [ ] Security
+- [ ] Rent Agreement
+        - How much deposit is returned on finding a replacement?
+- [ ] Washroom
+        - Sharing or personal
+- [ ] Food Preference
+        - Veg or Non Veg
+- [ ] Groceries and cook
+- [ ] Maid
+- [ ] Monthly charges - water, electricity, society maintenance and anything else?
+- [ ] One time setup cost
+- [ ] Smoking/Non smoking
+- [ ] Any problem with family/friends coming over to stay?
+- [ ] Ventilation
+- [ ] Sunlight
+- [ ] Paint Peel Off Charge
